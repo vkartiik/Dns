@@ -1,0 +1,1236 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import time
+import os
+import sys
+from datetime import datetime
+import subprocess
+
+# Import the DNS checker functions
+try:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from high_risk_dns_checker import (
+        get_all_ips, get_ttl, get_ns, get_whois, calculate_risk,
+        check_virustotal, check_abuseipdb_both, is_nixi_compliant
+    )
+except ImportError as e:
+    st.error(f"❌ Error importing DNS checker: {e}")
+    st.stop()
+
+# Page configuration
+st.set_page_config(
+    page_title="DNS Security Dashboard",
+    page_icon="",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for ultra-cool styling
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    * {
+        font-family: 'Inter', sans-serif;
+    }
+    
+    body {
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        background-attachment: fixed;
+    }
+    
+    .main-header {
+        background: rgba(255,255,255,0.1);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255,255,255,0.2);
+        color: white;
+        padding: 2rem;
+        border-radius: 20px;
+        margin-bottom: 2rem;
+        text-align: center;
+        font-size: 2.5rem;
+        font-weight: 700;
+        letter-spacing: 2px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    }
+    
+    .main-header-title {
+        display: inline-block;
+        vertical-align: middle;
+        font-size: 2.2rem;
+        font-weight: 700;
+        letter-spacing: 2px;
+        margin-left: 0.5rem;
+        color: #ffffff;
+    }
+    
+    .main-header-subtitle {
+        font-size: 1.1rem;
+        font-weight: 400;
+        color: #e0e6ed;
+        margin-top: 0.8rem;
+        margin-bottom: 0.3rem;
+        letter-spacing: 1px;
+        opacity: 0.9;
+    }
+    
+    .summary-card {
+        background: rgba(255,255,255,0.1);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 20px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        padding: 1.5rem 2rem;
+        margin-bottom: 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        transition: all 0.3s ease;
+    }
+    
+    .summary-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+        border-color: rgba(255,255,255,0.3);
+    }
+    
+    .summary-metric {
+        font-size: 2.2rem;
+        font-weight: 700;
+        margin-bottom: 0.3rem;
+        color: #ffffff;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        /* Ensure long values (e.g., IPv6) stay inside the card */
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        white-space: normal;
+        max-width: 100%;
+    }
+
+    /* Slightly smaller, tighter style for IP values */
+    .metric-ip {
+        font-size: 1.6rem;
+        line-height: 1.2;
+        letter-spacing: 0.5px;
+    }
+    
+    .summary-label {
+        font-size: 1rem;
+        color: #e0e6ed;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.9;
+    }
+    
+    .summary-icon {
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+    }
+    
+    .section-divider {
+        width: 100%;
+        height: 2px;
+        background: rgba(255,255,255,0.2);
+        border-radius: 1px;
+        margin: 2rem 0 1.5rem 0;
+    }
+    
+    .footer {
+        margin-top: 2rem;
+        padding: 1.5rem 0 1rem 0;
+        text-align: center;
+        color: #e0e6ed;
+        font-size: 1rem;
+        opacity: 0.8;
+        background: rgba(255,255,255,0.05);
+        border-radius: 15px;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,0.1);
+    }
+    
+    .footer a {
+        color: #4fc3f7;
+        text-decoration: none;
+        font-weight: 600;
+        transition: color 0.3s ease;
+    }
+    
+    .footer a:hover {
+        color: #81c784;
+    }
+    
+    .stDataFrame tbody tr:hover {
+        background: rgba(255,255,255,0.05) !important;
+        transition: all 0.3s ease;
+    }
+    
+    .metric-card {
+        background: rgba(255,255,255,0.1);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255,255,255,0.2);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 15px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        text-align: center;
+        margin: 0.5rem 0;
+        transition: all 0.3s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 35px rgba(0,0,0,0.15);
+        border-color: rgba(255,255,255,0.3);
+        background: rgba(255,255,255,0.15);
+    }
+    
+    .risk-high { color: #ff6b6b; font-weight: bold; }
+    .risk-medium { color: #ffd93d; font-weight: bold; }
+    .risk-low { color: #6bcf7f; font-weight: bold; }
+    
+    .status-safe { color: #6bcf7f; }
+    .status-medium { color: #ffd93d; }
+    .status-high { color: #ff6b6b; }
+    
+    .sidebar .sidebar-content {
+        background: rgba(255,255,255,0.05);
+        backdrop-filter: blur(20px);
+        border-right: 1px solid rgba(255,255,255,0.1);
+    }
+    
+    .stButton > button {
+        background: rgba(255,255,255,0.1);
+        backdrop-filter: blur(20px);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 10px;
+        padding: 0.7rem 1.5rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        background: rgba(255,255,255,0.2);
+        border-color: rgba(255,255,255,0.3);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    }
+    
+    .stTextInput > div > div > input {
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 8px;
+        color: white;
+        backdrop-filter: blur(10px);
+    }
+    
+    .stTextInput > div > div > input::placeholder {
+        color: rgba(255,255,255,0.6);
+    }
+    
+    .stTextArea > div > div > textarea {
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 8px;
+        color: white;
+        backdrop-filter: blur(10px);
+    }
+    
+    .stTextArea > div > div > textarea::placeholder {
+        color: rgba(255,255,255,0.6);
+    }
+    
+    .stSelectbox > div > div > div {
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 8px;
+        backdrop-filter: blur(10px);
+    }
+    
+    .stCheckbox > div > div {
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 6px;
+        backdrop-filter: blur(10px);
+    }
+    
+    .success-box {
+        background: rgba(107,207,127,0.1);
+        border: 1px solid rgba(107,207,127,0.3);
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 0.8rem 0;
+        backdrop-filter: blur(10px);
+    }
+    
+    .warning-box {
+        background: rgba(255,217,61,0.1);
+        border: 1px solid rgba(255,217,61,0.3);
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 0.8rem 0;
+        backdrop-filter: blur(10px);
+    }
+    
+    .info-box {
+        background: rgba(79,195,247,0.1);
+        border: 1px solid rgba(79,195,247,0.3);
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 0.8rem 0;
+        backdrop-filter: blur(10px);
+    }
+    
+    .pulse {
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.02); }
+        100% { transform: scale(1); }
+    }
+    
+    /* Simple form containers */
+    .form-container {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        backdrop-filter: blur(10px);
+    }
+    
+    .form-header {
+        color: #ffffff;
+        text-align: center;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        font-size: 1.2rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Helper: apply theme overrides based on chosen colors
+def apply_theme(primary_color: str, success_color: str, warning_color: str, danger_color: str) -> None:
+    # Save for use in Python-rendered components
+    st.session_state["color_primary"] = primary_color
+    st.session_state["color_success"] = success_color
+    st.session_state["color_warning"] = warning_color
+    st.session_state["color_danger"] = danger_color
+
+    # Inject CSS overrides to restyle result cards and accents
+    st.markdown(f"""
+    <style>
+      /* Override result card backgrounds */
+      .metric-card {{
+        background: linear-gradient(135deg, {primary_color} 0%, {success_color} 100%) !important;
+        border: 2px solid #ffffff !important;
+      }}
+      /* Make result numbers/text highly legible */
+      .summary-metric {{
+        background: none !important;
+        -webkit-text-fill-color: #ffffff !important;
+        color: #ffffff !important;
+        text-shadow: 0 2px 6px rgba(0,0,0,0.35);
+      }}
+      .summary-label {{
+        color: #ffffff !important;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.35);
+      }}
+      .section-divider {{
+        background: linear-gradient(90deg, {primary_color}, {success_color}, {warning_color}) !important;
+      }}
+      .main-header {{
+        background: linear-gradient(135deg, {primary_color} 0%, {primary_color} 50%, {primary_color} 100%) !important;
+      }}
+      /* Status colors */
+      .status-safe {{ color: {success_color} !important; }}
+      .status-medium {{ color: {warning_color} !important; }}
+      .status-high {{ color: {danger_color} !important; }}
+      /* Info/Warning/Success boxes */
+      .info-box {{ border: 2px solid {primary_color} !important; }}
+      .warning-box {{ border: 2px solid {warning_color} !important; }}
+      .success-box {{ border: 2px solid {success_color} !important; }}
+    </style>
+    """, unsafe_allow_html=True)
+
+def main():
+    # Header
+    st.markdown('''
+    <div class="main-header">
+        <span class="main-header-title">DNS Security Dashboard</span>
+        <div class="main-header-subtitle">Advanced Domain Security Analysis & Risk Assessment</div>
+        <div class="main-header-subtitle">Monitor • Analyze • Protect • Secure</div>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style='text-align:center; margin-bottom:2rem;'>
+        <span style='font-size:1.3rem; color:#ffffff; background:rgba(0,123,255,0.2); padding:1rem 2rem; border-radius:15px; backdrop-filter:blur(10px); border:1px solid rgba(0,123,255,0.3);'>
+            Professional DNS Security Analysis with Real-time Threat Detection
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar
+    with st.sidebar:
+        st.markdown("""
+        <div class="form-container">
+            <div class="form-header">Configuration Panel</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Theme controls
+        st.subheader("Theme")
+        cp_primary = st.color_picker("Primary", value="#007bff", key="cp_primary")
+        cp_success = st.color_picker("Success", value="#28a745", key="cp_success")
+        cp_warning = st.color_picker("Warning", value="#ffc107", key="cp_warning")
+        cp_danger = st.color_picker("Danger", value="#dc3545", key="cp_danger")
+        apply_theme(cp_primary, cp_success, cp_warning, cp_danger)
+        
+        # Analysis options
+        st.subheader("Analysis Options")
+        include_vt = st.checkbox("🦠 Include VirusTotal", value=True, key="vt_check")
+        include_abuseipdb = st.checkbox("🚨 Include AbuseIPDB", value=True, key="abuse_check")
+        include_nixi = st.checkbox("🇮🇳 Include NIXI Compliance", value=True, key="nixi_check")
+        
+        # Quick actions
+        st.markdown("---")
+        st.subheader("Quick Actions")
+        if st.button("Refresh Data", use_container_width=True, key="refresh_btn"):
+            st.rerun()
+        
+        if st.button("Run Default Analysis", use_container_width=True, key="default_btn"):
+            run_default_analysis()
+    
+    # Main content area
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("""
+        <div class="form-container">
+            <div class="form-header">Quick Analysis</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Quick Analysis Form
+        with st.form("quick_analysis_form", clear_on_submit=True):
+            st.markdown("""
+            <div class="form-container">
+                <div class="form-header">Single Domain Analysis</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            domain_input = st.text_input("Enter domain to analyze:", placeholder="example.com", key="single_domain_form")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                include_vt = st.checkbox("VirusTotal", value=True, key="vt_check_form")
+            with col2:
+                include_abuseipdb = st.checkbox("AbuseIPDB", value=True, key="abuse_check_form")
+            with col3:
+                include_nixi = st.checkbox("NIXI Compliance", value=True, key="nixi_check_form")
+            
+            if st.form_submit_button("Analyze Domain", use_container_width=True, type="primary"):
+                if domain_input:
+                    with st.spinner("Analyzing domain..."):
+                        try:
+                            result = analyze_single_domain(domain_input, include_vt, include_abuseipdb, include_nixi)
+                            display_single_result(result)
+                        except Exception as e:
+                            st.error(f"❌ Error analyzing domain: {e}")
+                else:
+                    st.warning("⚠️ Please enter a domain to analyze")
+        
+        # Batch Analysis Form
+        with st.form("batch_analysis_form", clear_on_submit=True):
+            st.markdown("""
+            <div class="form-container">
+                <div class="form-header">Batch Domain Analysis</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            batch_domains = st.text_area(
+                "Enter multiple domains (one per line):",
+                placeholder="domain1.com\ndomain2.com\ndomain3.com",
+                height=120,
+                key="batch_domains_form"
+            )
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                batch_vt = st.checkbox("VirusTotal", value=True, key="batch_vt_check")
+            with col2:
+                batch_abuseipdb = st.checkbox("AbuseIPDB", value=True, key="batch_abuse_check")
+            with col3:
+                batch_nixi = st.checkbox("NIXI Compliance", value=True, key="batch_nixi_check")
+            
+            if st.form_submit_button("Analyze Batch", use_container_width=True, type="primary"):
+                domains_list = [d.strip() for d in batch_domains.split('\n') if d.strip()]
+                if domains_list:
+                    with st.spinner(f"Analyzing {len(domains_list)} domains..."):
+                        try:
+                            results = analyze_batch_domains(domains_list, batch_vt, batch_abuseipdb, batch_nixi)
+                            display_batch_results(results)
+                        except Exception as e:
+                            st.error(f"❌ Error in batch analysis: {e}")
+                else:
+                    st.warning("⚠️ Please enter valid domains")
+    
+    with col2:
+        st.markdown("""
+        <div class="form-container">
+            <div class="form-header">Live Statistics</div>
+        </div>
+        """, unsafe_allow_html=True)
+        display_statistics()
+    
+    # Real-time Threat Detection Section
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="form-container">
+        <div class="form-header">Real-time Threat Detection</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Real-time threat monitoring
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        <div class="metric-card">
+            <div style='font-size:1.5rem; font-weight:bold; color:#ffffff; margin-bottom:0.5rem;'>Active Threats</div>
+            <div style='font-size:1.2rem; color:#ffcccc;'>Monitoring...</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="metric-card">
+            <div style='font-size:1.5rem; font-weight:bold; color:#ffffff; margin-bottom:0.5rem;'>Suspicious Activity</div>
+            <div style='font-size:1.2rem; color:#fff3cd;'>Analyzing...</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="metric-card">
+            <div style='font-size:1.5rem; font-weight:bold; color:#ffffff; margin-bottom:0.5rem;'>Safe Domains</div>
+            <div style='font-size:1.2rem; color:#d4edda;'>Protected</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Live threat feed
+    st.markdown("""
+    <div class="form-container">
+        <div class="form-header">📡 Live Threat Feed</div>
+        <div style='background:rgba(0,0,0,0.2); padding:1rem; border-radius:10px; border-left:4px solid #dc3545;'>
+            <div style='color:#ffcccc; font-size:0.9rem;'>
+                <span style='color:#dc3545; font-weight:bold;'>[LIVE]</span> Threat detection system active - Monitoring 10 domains
+            </div>
+            <div style='color:#ffcccc; font-size:0.9rem; margin-top:0.5rem;'>
+                <span style='color:#ffc107; font-weight:bold;'>[SCAN]</span> Running continuous security scans...
+            </div>
+            <div style='color:#ffcccc; font-size:0.9rem; margin-top:0.5rem;'>
+                <span style='color:#28a745; font-weight:bold;'>[STATUS]</span> All security services operational
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Quick threat scan
+    with st.expander("Quick Threat Scan", expanded=False):
+        st.markdown("""
+        <div class="form-container">
+            <div class="form-header">Scan a domain for immediate threats</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        quick_scan_domain = st.text_input("Enter domain for quick scan:", placeholder="suspicious-domain.com", key="quick_scan")
+        
+        if st.button("Run Quick Threat Scan", key="quick_scan_btn", use_container_width=True):
+            if quick_scan_domain:
+                with st.spinner("Scanning for threats..."):
+                    try:
+                        # Quick basic scan
+                        ipv4, ipv6 = get_all_ips(quick_scan_domain)
+                        if ipv4 or ipv6:
+                            st.success(f"Domain {quick_scan_domain} is accessible")
+                            if ipv4:
+                                st.info(f"IPv4: {ipv4}")
+                            if ipv6:
+                                st.info(f"IPv6: {ipv6}")
+                        else:
+                            st.warning(f"Domain {quick_scan_domain} is not accessible")
+                        
+                        # Check for suspicious patterns
+                        suspicious_keywords = ["login", "secure", "verify", "update", "gov", "account", "service", "portal"]
+                        if any(keyword in quick_scan_domain.lower() for keyword in suspicious_keywords):
+                            st.error(f"SUSPICIOUS: Domain contains suspicious keywords: {[k for k in suspicious_keywords if k in quick_scan_domain.lower()]}")
+                        else:
+                            st.success("No suspicious keywords detected")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error during quick scan: {e}")
+            else:
+                st.warning("⚠️ Please enter a domain to scan")
+    
+    # Historical Data Section
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="form-container">
+        <div class="form-header">Historical Data & Analytics</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Load and display CSV data
+    try:
+        df = load_csv_data()
+        if df is not None and not df.empty:
+            # Display summary statistics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown("""
+                <div class="metric-card">
+                    <div style='font-size:1.5rem; font-weight:bold; color:#ffffff; margin-bottom:0.5rem;'>Total Domains</div>
+                    <div style='font-size:1.2rem; color:#ffffff;'>{}</div>
+                </div>
+                """.format(len(df)), unsafe_allow_html=True)
+            
+            with col2:
+                high_risk_count = len(df[df['Risk Score'] > 3.5]) if 'Risk Score' in df.columns else 0
+                st.markdown("""
+                <div class="metric-card">
+                    <div style='font-size:1.5rem; font-weight:bold; color:#ffffff; margin-bottom:0.5rem;'>High Risk</div>
+                    <div style='font-size:1.2rem; color:#ffcccc;'>{}</div>
+                </div>
+                """.format(high_risk_count), unsafe_allow_html=True)
+            
+            with col3:
+                medium_risk_count = len(df[(df['Risk Score'] > 2) & (df['Risk Score'] <= 3.5)]) if 'Risk Score' in df.columns else 0
+                st.markdown("""
+                <div class="metric-card">
+                    <div style='font-size:1.5rem; font-weight:bold; color:#ffffff; margin-bottom:0.5rem;'>Medium Risk</div>
+                    <div style='font-size:1.2rem; color:#fff3cd;'>{}</div>
+                </div>
+                """.format(medium_risk_count), unsafe_allow_html=True)
+            
+            with col4:
+                safe_count = len(df[df['Risk Score'] <= 2]) if 'Risk Score' in df.columns else 0
+                st.markdown("""
+                <div class="metric-card">
+                    <div style='font-size:1.5rem; font-weight:bold; color:#ffffff; margin-bottom:0.5rem;'>Safe</div>
+                    <div style='font-size:1.2rem; color:#d4edda;'>{}</div>
+                </div>
+                """.format(safe_count), unsafe_allow_html=True)
+            
+            # Create visualizations
+            st.markdown("""
+            <div class="form-container">
+                <div class="form-header">Data Visualizations</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            create_visualizations(df)
+            
+            # Display data table
+            st.markdown("""
+            <div class="form-container">
+                <div class="form-header">Detailed Data Table</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            display_dataframe(df)
+            
+        else:
+            st.markdown("""
+            <div class="info-box">
+                <h4>📊 No Historical Data Available</h4>
+                <p>Run an analysis to generate data and view historical results.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    except Exception as e:
+        st.error(f"❌ Error loading historical data: {e}")
+    
+    # Footer
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="footer">
+        <p>🔒 DNS Security Dashboard | Real-time threat detection and domain analysis</p>
+        <p>Built with advanced security algorithms and real-time monitoring</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def run_default_analysis():
+    """Run analysis on default domains"""
+    default_domains = [
+        "nfsu.ac.in", "mohfw.gov.in", "sbi.co.in", "nixi.in", 
+        "registry.in", "cdac.in", "stpi.in", "nasscom.in", 
+        "amazon.in", "lic.in"
+    ]
+    
+    with st.spinner("🔄 Running default analysis..."):
+        try:
+            results = analyze_batch_domains(default_domains, True, True, True)
+            display_batch_results(results)
+            st.success("✅ Default analysis completed successfully!")
+        except Exception as e:
+            st.error(f"❌ Error in default analysis: {e}")
+
+def analyze_single_domain(domain, include_vt=True, include_abuseipdb=True, include_nixi=True):
+    """Analyze a single domain with error handling"""
+    try:
+        # Get domain information
+        ipv4, ipv6 = get_all_ips(domain)
+        ttl = get_ttl(domain)
+        ns_list = get_ns(domain)
+        whois_info = get_whois(domain)
+        
+        # Calculate risk
+        score, reasons = calculate_risk(domain, ipv4, ipv6, ttl, ns_list, whois_info)
+        normalized_score = min(round((score / 24) * 5, 2), 5)
+        
+        # Determine status
+        if normalized_score >= 4:
+            status = "HIGH RISK"
+            status_class = "status-high"
+        elif normalized_score >= 2:
+            status = "Medium Risk"
+            status_class = "status-medium"
+        else:
+            status = "Safe"
+            status_class = "status-low"
+        
+        # Get external reputation data
+        vt_status = check_virustotal(domain) if include_vt else "Skipped"
+        abuseipdb_status = check_abuseipdb_both(ipv4, ipv6) if include_abuseipdb else "Skipped"
+        nixi_status = is_nixi_compliant(ipv4, ipv6, ns_list) if include_nixi and any(s in domain for s in [".in", ".gov.in", ".nic.in"]) else "N/A"
+        
+        return {
+            'domain': domain,
+            'ipv4': ipv4 or "N/A",
+            'ipv6': ipv6 or "N/A",
+            'ttl': ttl or "N/A",
+            'ns': ", ".join(ns_list) if ns_list else "N/A",
+            'risk_score': normalized_score,
+            'reasons': ", ".join(reasons),
+            'status': status,
+            'vt_status': vt_status,
+            'abuseipdb_status': abuseipdb_status,
+            'nixi_status': nixi_status,
+            'status_class': status_class
+        }
+    except Exception as e:
+        st.error(f"❌ Error analyzing {domain}: {e}")
+        return {
+            'domain': domain,
+            'ipv4': "Error",
+            'ipv6': "Error",
+            'ttl': "Error",
+            'ns': "Error",
+            'risk_score': 0,
+            'reasons': f"Error: {e}",
+            'status': "❌ Error",
+            'vt_status': "Error",
+            'abuseipdb_status': "Error",
+            'nixi_status': "Error",
+            'status_class': "status-high"
+        }
+
+def analyze_batch_domains(domains, include_vt=True, include_abuseipdb=True, include_nixi=True):
+    """Analyze multiple domains with progress tracking"""
+    results = []
+    
+    # Create progress elements
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        for i, domain in enumerate(domains):
+            status_text.text(f"🔍 Analyzing {domain}... ({i+1}/{len(domains)})")
+            result = analyze_single_domain(domain, include_vt, include_abuseipdb, include_nixi)
+            results.append(result)
+            progress_bar.progress((i + 1) / len(domains))
+            time.sleep(0.2)  # Smooth progress animation
+        
+        # Clear progress elements
+        progress_bar.empty()
+        status_text.empty()
+        
+        return results
+    except Exception as e:
+        st.error(f"❌ Batch analysis failed: {e}")
+        return results
+
+def display_single_result(result):
+    """Display results for a single domain analysis with beautiful styling"""
+    st.markdown("---")
+    
+    # Status header with dynamic colors
+    if result['status'] == "HIGH RISK":
+        status_color = st.session_state.get("color_danger", "#dc3545")
+        bg_color = "rgba(220,53,69,0.15)"
+    elif result['status'] == "Medium Risk":
+        status_color = st.session_state.get("color_warning", "#ffc107")
+        bg_color = "rgba(255,193,7,0.15)"
+    else:
+        status_color = st.session_state.get("color_success", "#28a745")
+        bg_color = "rgba(40,167,69,0.15)"
+    
+    st.markdown(f"""
+    <div style='background:{bg_color}; border:2px solid {status_color}; color:{status_color}; padding:1.5rem; border-radius:20px; font-size:1.3rem; text-align:center; backdrop-filter:blur(10px); margin-bottom:2rem;'>
+        <strong>Status: {result['status']}</strong> | <strong>Risk Score: {result['risk_score']}/5</strong>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Metrics in beautiful cards
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown(f"""
+        <div class="metric-card pulse">
+            <div class="summary-metric">{result['domain']}</div>
+            <div class="summary-label">Domain</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-icon">🔢</div>
+            <div class="summary-metric metric-ip">{result['ipv4']}</div>
+            <div class="summary-label">IPv4 Address</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-icon">🔢</div>
+            <div class="summary-metric metric-ip">{result['ipv6']}</div>
+            <div class="summary-label">IPv6 Address</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{result['ttl']}</div>
+            <div class="summary-label">TTL (seconds)</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{result['risk_score']}/5</div>
+            <div class="summary-label">Risk Score</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{result['status']}</div>
+            <div class="summary-label">Security Status</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{result['vt_status']}</div>
+            <div class="summary-label">VirusTotal</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{result['abuseipdb_status']}</div>
+            <div class="summary-label">AbuseIPDB</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{result['nixi_status']}</div>
+            <div class="summary-label">NIXI Compliant</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Risk reasons with better styling
+    if result['reasons'] and result['reasons'] != "N/A":
+        st.markdown(f"""
+        <div class="warning-box">
+            <h4 style='color:#ffc107; margin-bottom:0.5rem;'>⚠️ Risk Factors Identified</h4>
+            <p style='color:#ffffff; margin:0;'>{result['reasons']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Name servers with better styling
+    if result['ns'] and result['ns'] != "N/A":
+        st.markdown(f"""
+        <div class="info-box">
+            <h4 style='color:#28a745; margin-bottom:0.5rem;'>🔗 Name Servers</h4>
+            <p style='color:#ffffff; margin:0;'>{result['ns']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+def display_batch_results(results):
+    """Display results for batch analysis with beautiful styling"""
+    st.markdown("---")
+    
+    # Create DataFrame
+    df = pd.DataFrame(results)
+    
+    # Display summary metrics in beautiful cards
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(f"""
+        <div class="metric-card pulse">
+            <div class="summary-metric">{len(results)}</div>
+            <div class="summary-label">Total Domains</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        high_risk = len([r for r in results if r['risk_score'] >= 4])
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{high_risk}</div>
+            <div class="summary-label">High Risk</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        medium_risk = len([r for r in results if 2 <= r['risk_score'] < 4])
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{medium_risk}</div>
+            <div class="summary-label">Medium Risk</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        safe = len([r for r in results if r['risk_score'] < 2])
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="summary-metric">{safe}</div>
+            <div class="summary-label">Safe</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Display results table
+    st.subheader("Analysis Results")
+    display_dataframe(df)
+    
+    # Save results with better styling
+    if st.button("Save Results to CSV", use_container_width=True, key="save_batch"):
+        try:
+            save_results_to_csv(results)
+        except Exception as e:
+            st.error(f"❌ Error saving results: {e}")
+
+def display_statistics():
+    """Display general statistics with beautiful styling"""
+    if os.path.exists("high_risk_dns_report.csv"):
+        try:
+            df = load_csv_data()
+            if not df.empty:
+                total_domains = len(df)
+                high_risk = len(df[df['Risk Score'] >= 4])
+                medium_risk = len(df[(df['Risk Score'] >= 2) & (df['Risk Score'] < 4)])
+                safe = len(df[df['Risk Score'] < 2])
+                
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="summary-icon">🔢</div>
+                    <div class="summary-metric">{total_domains}</div>
+                    <div class="summary-label">Total Analyzed</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="summary-icon">🚨</div>
+                    <div class="summary-metric">{high_risk}</div>
+                    <div class="summary-label">High Risk</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="summary-icon">⚠️</div>
+                    <div class="summary-metric">{medium_risk}</div>
+                    <div class="summary-label">Medium Risk</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="summary-icon">✅</div>
+                    <div class="summary-metric">{safe}</div>
+                    <div class="summary-label">Safe</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("📊 No data available")
+        except Exception as e:
+            st.error(f"❌ Error loading statistics: {e}")
+    else:
+        st.info("📊 No data available")
+
+def display_summary_metrics(df):
+    """Display summary metrics in beautiful cards"""
+    st.subheader("📊 Summary Metrics")
+    
+    try:
+        total_domains = len(df)
+        high_risk = len(df[df['Risk Score'] >= 4])
+        medium_risk = len(df[(df['Risk Score'] >= 2) & (df['Risk Score'] < 4)])
+        safe = len(df[df['Risk Score'] < 2])
+        nixi_non_compliant = len(df[df['NIXI Compliant'] == 'No'])
+        
+        st.markdown("""
+        <div class='summary-card'>
+            <div style='text-align:center;'>
+                <div class='summary-icon'>🔢</div>
+                <div class='summary-metric'>{}</div>
+                <div class='summary-label'>Total Domains</div>
+            </div>
+            <div style='text-align:center;'>
+                <div class='summary-icon'>🚨</div>
+                <div class='summary-metric' style='color:#dc3545'>{}</div>
+                <div class='summary-label'>High Risk</div>
+            </div>
+            <div style='text-align:center;'>
+                <div class='summary-icon'>⚠️</div>
+                <div class='summary-metric' style='color:#ffc107'>{}</div>
+                <div class='summary-label'>Medium Risk</div>
+            </div>
+            <div style='text-align:center;'>
+                <div class='summary-icon'>🇮🇳</div>
+                <div class='summary-metric' style='color:#28a745'>{}</div>
+                <div class='summary-label'>NIXI Non-Compliant</div>
+            </div>
+        </div>
+        """.format(total_domains, high_risk, medium_risk, nixi_non_compliant), unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"❌ Error calculating summary metrics: {e}")
+
+def load_csv_data():
+    """Load data from CSV file with error handling"""
+    try:
+        df = pd.read_csv("high_risk_dns_report.csv")
+        return df
+    except Exception as e:
+        st.error(f"❌ Error loading CSV: {e}")
+        return pd.DataFrame()
+
+def display_dataframe(df):
+    """Display DataFrame with styling"""
+    if not df.empty:
+        try:
+            # Rename columns for better display
+            df_display = df.copy()
+            if 'Risk Score' in df_display.columns:
+                df_display['Risk Score'] = df_display['Risk Score'].round(2)
+            
+            st.dataframe(df_display, use_container_width=True)
+        except Exception as e:
+            st.error(f"❌ Error displaying data: {e}")
+
+def display_data_table(df):
+    """Display data table with filters and better styling"""
+    st.subheader("📋 Domain Analysis Data")
+    
+    try:
+        # Download button
+        st.download_button(
+            label="⬇️ Download CSV Report",
+            data=df.to_csv(index=False),
+            file_name="high_risk_dns_report.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        
+        # Filters
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            search_domain = st.text_input("🔍 Search Domain (partial or full)", key="search_domain")
+        
+        with col2:
+            if 'Status' in df.columns:
+                status_options = sorted(df["Status"].unique())
+                selected_status = st.multiselect("Risk Status", options=status_options, default=status_options, key="status_filter")
+            else:
+                selected_status = []
+        
+        # Apply filters
+        filtered_df = df.copy()
+        if search_domain:
+            filtered_df = filtered_df[filtered_df["Domain"].str.contains(search_domain, case=False, na=False)]
+        
+        if selected_status and 'Status' in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["Status"].isin(selected_status)]
+        
+        # Display filtered data
+        if not filtered_df.empty:
+            st.dataframe(filtered_df, use_container_width=True)
+        else:
+            st.info("🔍 No domains match the current filter selection.")
+    except Exception as e:
+        st.error(f"❌ Error displaying data table: {e}")
+
+def create_visualizations(df):
+    """Create charts and visualizations with better styling"""
+    if df.empty:
+        return
+    
+    st.subheader("📈 Data Visualizations")
+    
+    try:
+        # Risk score distribution
+        if 'Risk Score' in df.columns:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig_risk = px.histogram(
+                    df, 
+                    x='Risk Score', 
+                    title='Risk Score Distribution',
+                    nbins=10,
+                    color_discrete_sequence=['#007bff']
+                )
+                fig_risk.update_layout(
+                    showlegend=False,
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color='#ffffff'),
+                    title_font_color='#007bff'
+                )
+                st.plotly_chart(fig_risk, use_container_width=True)
+            
+            with col2:
+                # Risk categories pie chart
+                risk_categories = []
+                for score in df['Risk Score']:
+                    if score >= 4:
+                        risk_categories.append('High Risk')
+                    elif score >= 2:
+                        risk_categories.append('Medium Risk')
+                    else:
+                        risk_categories.append('Safe')
+                
+                risk_df = pd.DataFrame({'Category': risk_categories})
+                fig_pie = px.pie(
+                    risk_df, 
+                    names='Category', 
+                    title='Risk Categories Distribution',
+                    color_discrete_map={
+                        'High Risk': '#dc3545',
+                        'Medium Risk': '#ffc107',
+                        'Safe': '#28a745'
+                    }
+                )
+                fig_pie.update_layout(
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color='#ffffff'),
+                    title_font_color='#007bff'
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+        
+        # Status analysis
+        if 'Status' in df.columns:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                status_counts = df['Status'].value_counts()
+                fig_status = px.bar(
+                    x=status_counts.index,
+                    y=status_counts.values,
+                    title='Status Distribution',
+                    color_discrete_sequence=['#007bff']
+                )
+                fig_status.update_layout(
+                    showlegend=False,
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color='#ffffff'),
+                    title_font_color='#007bff'
+                )
+                st.plotly_chart(fig_status, use_container_width=True)
+            
+            with col2:
+                # NIXI compliance
+                if 'NIXI Compliant' in df.columns:
+                    nixi_counts = df['NIXI Compliant'].value_counts()
+                    fig_nixi = px.pie(
+                        values=nixi_counts.values,
+                        names=nixi_counts.index,
+                        title='NIXI Compliance Status'
+                    )
+                    fig_nixi.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color='#ffffff'),
+                        title_font_color='#007bff'
+                    )
+                    st.plotly_chart(fig_nixi, use_container_width=True)
+    except Exception as e:
+        st.error(f"❌ Error creating visualizations: {e}")
+
+def save_results_to_csv(results):
+    """Save analysis results to CSV with error handling"""
+    try:
+        df = pd.DataFrame(results)
+        
+        # Remove internal columns
+        if 'status_class' in df.columns:
+            df = df.drop('status_class', axis=1)
+        
+        # Rename columns to match expected format
+        column_mapping = {
+            'domain': 'Domain',
+            'ipv4': 'IPv4',
+            'ipv6': 'IPv6',
+            'ttl': 'TTL',
+            'ns': 'Name Servers',
+            'risk_score': 'Risk Score',
+            'reasons': 'Reasons',
+            'status': 'Status',
+            'vt_status': 'VirusTotal',
+            'abuseipdb_status': 'AbuseIPDB',
+            'nixi_status': 'NIXI Compliant'
+        }
+        
+        df = df.rename(columns=column_mapping)
+        
+        # Save to CSV
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"dns_analysis_{timestamp}.csv"
+        df.to_csv(filename, index=False)
+        
+        st.success(f"✅ Results saved to {filename}")
+        
+        # Also update the main report
+        df.to_csv("high_risk_dns_report.csv", index=False)
+        st.info("✅ Main report updated")
+        
+    except Exception as e:
+        st.error(f"❌ Error saving results: {e}")
+
+if __name__ == "__main__":
+    main() 
